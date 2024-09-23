@@ -1,6 +1,6 @@
 # Microcanonical Langevin Ensembles: Advancing the Sampling of Bayesian Neural Networks
 
-![Flowchart](flowchart.pdf)
+![Flowchart](flowchart.png)
 
 ## Setup
 
