@@ -1,4 +1,4 @@
-# Microcanonical Langevin Ensembles: Advancing the Sampling of Bayesian Neural Networks
+# MIcrocanonical Langevin Ensembles (MILE): Advancing the Sampling of Bayesian Neural Networks
 
 ![Flowchart](flowchart.png)
 
