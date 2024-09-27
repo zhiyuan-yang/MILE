@@ -161,6 +161,7 @@ class BDETrainer:
                 )
             )
         # Sampling Phase
+        # breakpoint() # comes in handy for pretraining of e.g. embeddings
         logger.info('> Starting Sampling...')
         self.start_sampling()
         self._completed = True

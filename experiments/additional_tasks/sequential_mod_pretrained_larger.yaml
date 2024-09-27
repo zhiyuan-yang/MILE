@@ -28,7 +28,7 @@ model:
   dropout: 0.1
   dtype: float32
   n_classes: 2
-  emb_path: results/mclmc_paper/pretrained_seq/emb_large.npy # extract the pretained embeddings beforehand from the results of `sequential_mod_pretraining_larger.yaml`
+  emb_path: results/pretrained_seq/emb_large.npy # extract the pretained embeddings beforehand from the results of `sequential_mod_pretraining_larger.yaml`
 training:
   warmstart:
     include: true
