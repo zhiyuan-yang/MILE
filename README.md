@@ -92,3 +92,15 @@ install.packages(c(
 ```
 
 We used R version `4.1.1`.
+
+## Citation
+
+```bibtex
+@inproceedings{
+  sommer2025microcanonical,
+  title={Microcanonical Langevin Ensembles: Advancing the Sampling of Bayesian Neural Networks},
+  author={Emanuel Sommer and Jakob Robnik and Giorgi Nozadze and Uros Seljak and David R{\"u}gamer},
+  booktitle={The Thirteenth International Conference on Learning Representations},
+  year={2025}
+}
+```
