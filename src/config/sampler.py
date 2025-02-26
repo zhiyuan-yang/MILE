@@ -185,14 +185,7 @@ class SamplerConfig(BaseConfig):
     def __post_init__(self):
         """Post Initialization for the Sampler Configuration."""
         super().__post_init__()
-        mini_batch_only = ['batch_size', 'n_integration_steps', 'mdecay', 'step_size']
-        if self.name == Sampler.NUTS:
-            for fn in mini_batch_only:
-                if getattr(self, fn) is not None:
-                    default = self.__class__.__dataclass_fields__[fn].default
-                    warnings.warn(f'Ignoring {fn} in NUTS Sampling.', UserWarning)
-                    self._modify_field(**{fn: default})
-
+    
     @property
     def prior(self):
         """Get the prior."""
