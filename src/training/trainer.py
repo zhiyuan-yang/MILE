@@ -27,7 +27,7 @@ from src.inference.metrics import (
 )
 from src.inference.reporting import generate_html_report
 from src.training.probabilistic import ProbabilisticModel
-from src.training.sampling import inference_loop
+from src.training.sampling import inference_loop, inference_loop_partial
 from src.types import ParamTree
 from src.utils import measure_time, pretty_string_dict
 
@@ -62,6 +62,7 @@ class BDETrainer:
         self.n_devices = jax.device_count()
         self.metrics_warmstart = MetricsStore.empty()
         self._completed = False
+        self.partial_sample_from_prior = True
 
         # Setup directory
         logger.info('> Setting up directories...')
@@ -163,7 +164,10 @@ class BDETrainer:
         # Sampling Phase
         # breakpoint() # comes in handy for pretraining of e.g. embeddings
         logger.info('> Starting Sampling...')
-        self.start_sampling()
+        if self.partial_sample_from_prior == False:
+            self.start_sampling()
+        else:
+            self.start_partial_sampling_from_prior()
         self._completed = True
         logger.info('> BDE Training completed successfully.')
 
@@ -582,8 +586,58 @@ class BDETrainer:
 
             else:  # Mini-Batch Sampling
                 raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
+    
+    @measure_time('time.sampling')
+    def start_partial_sampling_from_prior(self):
+        """Start Sampling Phase of BDE (MCMC Sampling either Full- or Mini-Batch)."""
+        if self.has_warmstart:
+            if warm_exp := self.config_warmstart.warmstart_exp_dir:
+                logger.info(
+                    f'\t| Using Warmstart from experiment: {warm_exp.split("/")[-1]}'
+                )
+            warm_exp = (
+                warm_exp or self.exp_dir.__str__()
+            )  # We check whether we take warmstart from other exp or from current.
 
+            warm_path = Path(warm_exp) / self.config_warmstart._dir_name
 
+            chains = [
+                warm_path / i for i in os.listdir(warm_path) if i.startswith('params')
+            ]
+        else:
+            chains = []  # Warmstart disabled: we desire to start from random ParamTree.
+
+        for step in self.train_plan:
+            logger.info(f'\t| Starting Sampling for chains {step}')
+            if chains:  # Warmstart enabled
+                params = train_utils.load_params_batch(
+                    params_path=[chains[i] for i in step], tree_path=self.tree_path
+                )
+            else:
+                logger.warning(
+                    '\t| No warmstart path found, starting sampling from random params.'
+                )
+                params = self.init_module_params(n_device=len(step))
+
+            if not self.prob_model.minibatch:  # Full Batch Sampling
+                log_post = partial(
+                    self.prob_model.log_unnormalized_posterior,
+                    x=self.loader.train_x,
+                    y=self.loader.train_y,
+                )
+                inference_loop_partial(
+                    unnorm_log_posterior=log_post,
+                    config=self.config_sampler,
+                    rng_key=self.key,
+                    init_params=params,
+                    step_ids=step,
+                    saving_path=self.exp_dir / self.config_sampler._dir_name,
+                    saving_path_warmup=self._sampling_warmup_dir,
+                )
+
+            else:  # Mini-Batch Sampling
+                raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
+            
 def single_step_class(
     state: TrainState,
     x: jnp.ndarray,
