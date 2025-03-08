@@ -67,7 +67,8 @@ def save_position_partial(position: ParamTree, base: Path, idx: jnp.ndarray, n: 
     param_names = get_flattened_keys(position)
     # Change the intermediate layers with Gaussian samples
     for i, (name, leaf) in enumerate(zip(param_names, leafs)):
-        if i != 0 and i != len(leafs) - 1 and 'bias' in name:
+        #print(f'Current i is {i} and name is {name}, shape of leaf is {leaf.shape}\n')
+        if name == 'fcn.layer1.kernel':
             leafs[i] = np.random.normal(loc=0, scale=1.0, size=leaf.shape)
     path = base / f'{idx.item()}/sample_{n}.npz'
     if not path.parent.exists():

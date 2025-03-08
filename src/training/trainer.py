@@ -9,6 +9,9 @@ import jax
 import jax.numpy as jnp
 import optax
 from flax.training.train_state import TrainState
+import jax.scipy.stats as stats
+from jax.flatten_util import ravel_pytree
+import numpy as np
 
 import src.inference.metrics as sandbox_metrics
 import src.training.utils as train_utils
@@ -27,7 +30,7 @@ from src.inference.metrics import (
 )
 from src.inference.reporting import generate_html_report
 from src.training.probabilistic import ProbabilisticModel
-from src.training.sampling import inference_loop, inference_loop_partial
+from src.training.sampling import inference_loop, partition_inference_loop
 from src.types import ParamTree
 from src.utils import measure_time, pretty_string_dict
 
@@ -62,7 +65,8 @@ class BDETrainer:
         self.n_devices = jax.device_count()
         self.metrics_warmstart = MetricsStore.empty()
         self._completed = False
-        self.partial_sample_from_prior = True
+        self.partition_warmstart = True
+        self.partition_sampling = True
 
         # Setup directory
         logger.info('> Setting up directories...')
@@ -164,12 +168,14 @@ class BDETrainer:
         # Sampling Phase
         # breakpoint() # comes in handy for pretraining of e.g. embeddings
         logger.info('> Starting Sampling...')
-        if self.partial_sample_from_prior == False:
-            self.start_sampling()
-        else:
-            self.start_partial_sampling_from_prior()
+        self.start_sampling()
         self._completed = True
         logger.info('> BDE Training completed successfully.')
+        
+        # Add fixed params to samples if using partition sampling
+        #if self.partition_sampling:
+        #    logger.info('> Adding fixed params to samples...')
+        #    self.complete_samples()
 
         # Reporting Phase
         logger.info('> Generating HTML Report...')
@@ -238,17 +244,19 @@ class BDETrainer:
             (TrainState): Initialized training state.
         """
         if n_device > 1:  # replicate the input for multiple devices
-            return jax.pmap(get_initial_state, static_broadcasted_argnums=(2, 3))(
+            return jax.pmap(get_initial_state, static_broadcasted_argnums=(2, 3, 4))(
                 jax.random.split(self.key, n_device),
                 self.get_single_input()[None, ...].repeat(n_device, axis=0),
                 self.module,
                 self.optimizer,
+                self.partition_warmstart
             )
         return get_initial_state(
             rng=self.key,
             x=self.get_single_input(),
             module=self.module,
             optimizer=self.optimizer,
+            partition_initial = self.partition_warmstart
         )
 
     @property
@@ -333,7 +341,7 @@ class BDETrainer:
 
             for step in self.train_plan:  # Train Deep Ensemble Members
                 state = self.init_training_state(n_device=len(step))
-
+                
                 # Train Deep Ensemble
                 logger.info(f'\t| Starting Training Warmstart for chains {step}')
                 state, metrics = self.train_de_member(state=state, n_parallel=len(step))
@@ -568,75 +576,62 @@ class BDETrainer:
                 )
                 params = self.init_module_params(n_device=len(step))
 
-            if not self.prob_model.minibatch:  # Full Batch Sampling
-                log_post = partial(
-                    self.prob_model.log_unnormalized_posterior,
-                    x=self.loader.train_x,
-                    y=self.loader.train_y,
-                )
-                inference_loop(
-                    unnorm_log_posterior=log_post,
-                    config=self.config_sampler,
-                    rng_key=self.key,
-                    init_params=params,
-                    step_ids=step,
-                    saving_path=self.exp_dir / self.config_sampler._dir_name,
-                    saving_path_warmup=self._sampling_warmup_dir,
-                )
+            if not self.partition_sampling:
+                if not self.prob_model.minibatch:  # Full Batch Sampling
+                    log_post = partial(
+                        self.prob_model.log_unnormalized_posterior,
+                        x=self.loader.train_x,
+                        y=self.loader.train_y,   
+                    )
+                    inference_loop(
+                        unnorm_log_posterior=log_post,
+                        config=self.config_sampler,
+                        rng_key=self.key,
+                        init_params=params,
+                        step_ids=step,
+                        saving_path=self.exp_dir / self.config_sampler._dir_name,
+                        saving_path_warmup=self._sampling_warmup_dir,
+                    )
 
-            else:  # Mini-Batch Sampling
-                raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
-    
-    @measure_time('time.sampling')
-    def start_partial_sampling_from_prior(self):
-        """Start Sampling Phase of BDE (MCMC Sampling either Full- or Mini-Batch)."""
-        if self.has_warmstart:
-            if warm_exp := self.config_warmstart.warmstart_exp_dir:
-                logger.info(
-                    f'\t| Using Warmstart from experiment: {warm_exp.split("/")[-1]}'
-                )
-            warm_exp = (
-                warm_exp or self.exp_dir.__str__()
-            )  # We check whether we take warmstart from other exp or from current.
-
-            warm_path = Path(warm_exp) / self.config_warmstart._dir_name
-
-            chains = [
-                warm_path / i for i in os.listdir(warm_path) if i.startswith('params')
-            ]
-        else:
-            chains = []  # Warmstart disabled: we desire to start from random ParamTree.
-
-        for step in self.train_plan:
-            logger.info(f'\t| Starting Sampling for chains {step}')
-            if chains:  # Warmstart enabled
-                params = train_utils.load_params_batch(
-                    params_path=[chains[i] for i in step], tree_path=self.tree_path
-                )
+                else:  # Mini-Batch Sampling
+                    raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
             else:
-                logger.warning(
-                    '\t| No warmstart path found, starting sampling from random params.'
-                )
-                params = self.init_module_params(n_device=len(step))
-
-            if not self.prob_model.minibatch:  # Full Batch Sampling
+                params, fixed_params = partition_params(params)
                 log_post = partial(
-                    self.prob_model.log_unnormalized_posterior,
-                    x=self.loader.train_x,
-                    y=self.loader.train_y,
-                )
-                inference_loop_partial(
-                    unnorm_log_posterior=log_post,
-                    config=self.config_sampler,
-                    rng_key=self.key,
-                    init_params=params,
-                    step_ids=step,
-                    saving_path=self.exp_dir / self.config_sampler._dir_name,
-                    saving_path_warmup=self._sampling_warmup_dir,
-                )
-
-            else:  # Mini-Batch Sampling
-                raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
+                        log_unnormalized_posterior_partition,
+                        x=self.loader.train_x,
+                        y=self.loader.train_y,
+                        fixed_params=fixed_params,
+                ) 
+                inference_loop(
+                        unnorm_log_posterior=log_post,
+                        config=self.config_sampler,
+                        rng_key=self.key,
+                        init_params=params,
+                        step_ids=step,
+                        saving_path=self.exp_dir / self.config_sampler._dir_name,
+                        saving_path_warmup=self._sampling_warmup_dir,
+                    ) 
+    
+    #def complete_samples(self):
+    #    """Complete the samples with fixed params."""
+    #    chains = [
+    #        self.exp_dir / self.config_warmstart._dir_name / f'params_{i}.npz'
+    #        for i in range(self.n_chains)
+    #    ]
+    #    saving_path = self.exp_dir / self.config_sampler._dir_name
+    #    for i in range(self.n_chains):
+    #        warmstart = dict(np.load(chains[i]))
+    #        sample_files = sorted(saving_path.glob(f'{i}/*.npz'))
+    #        samples = [np.load(file) for file in sample_files]
+    #        for sample in samples:
+    #            dic_sample = dict(sample)
+    #            for key in warmstart.keys():
+    #                if key not in dic_sample:    
+    #                    dic_sample[key] = warmstart[key]
+    #            np.savez(sample_files[i], **dic_sample)
+                
+            
             
 def single_step_class(
     state: TrainState,
@@ -851,6 +846,7 @@ def get_initial_state(
     x: jnp.ndarray,
     module: nn.Module,
     optimizer: optax.GradientTransformation,
+    partition_initial
 ) -> TrainState:
     """Get the initial training state.
 
@@ -865,8 +861,18 @@ def get_initial_state(
     -------
         (TrainState): Initial Training State.
     """
-    params = module.init(rng, x=x)['params']
-    return TrainState.create(apply_fn=module.apply, params=params, tx=optimizer)
+    if not partition_initial:
+        params = module.init(rng, x=x)['params']
+        return TrainState.create(apply_fn=module.apply, params=params, tx=optimizer)
+    else:
+        params = module.init(rng, x=x)['params']
+        label_fn = map_nested_fn(lambda parent_key, k, v: fn(parent_key, k, v, params))
+        optimizers = {
+            'input_output_layers': optimizer,
+            'hidden_layers': optax.set_to_zero()
+        }
+        optimizer = optax.multi_transform(optimizers, label_fn)
+        return TrainState.create(apply_fn=module.apply, params=params, tx=optimizer)
 
 
 def initialize_params(rng: jnp.ndarray, x: jnp.ndarray, module: nn.Module) -> ParamTree:
@@ -904,3 +910,68 @@ def earlystop(losses: jnp.ndarray, patience: int):
     reference_loss = jnp.expand_dims(reference_loss, axis=-1)
     recent_losses = losses[:, -(patience):]
     return jnp.all(recent_losses >= reference_loss, axis=1)
+
+def map_nested_fn(fn):
+    '''Recursively apply `fn` to key-value pairs of a nested dict.'''
+    def map_fn(nested_dict, parent_key=''):
+        return {k: (map_fn(v, k) if isinstance(v, dict) else fn(parent_key, k, v))
+                for k, v in nested_dict.items()}
+    return map_fn
+
+def fn(parent_key, k, _, params):
+    layer_keys = list(params['fcn'].keys())
+    if parent_key == layer_keys[0] or parent_key == layer_keys[-1]:
+        return 'input_output_layers'
+    else:
+        return 'hidden_layers'
+    
+def partition_params(params):
+    input_output_layers = {}
+    hidden_layers = {}
+
+    input_output_layers = {}
+    hidden_layers = {}
+
+    for key, value in params['fcn'].items():
+        if key == 'layer0' or key == f'layer{len(params["fcn"]) - 1}':
+            input_output_layers[key] = value
+        else:
+            hidden_layers[key] = value
+
+    return {'fcn': input_output_layers}, {'fcn': hidden_layers}
+
+def log_prior(params: ParamTree) -> jax.Array:
+        """Compute log prior for given parameters."""
+        scores = stats.norm.logpdf(ravel_pytree(params)[0], loc=0, scale=1.0)
+        return jnp.sum(scores)
+    
+def log_likelihood_partition(
+    input_output_layers: ParamTree,
+    hidden_layers: ParamTree,
+    x: jnp.ndarray,
+    y: jnp.ndarray,
+    **kwargs,
+) -> jnp.ndarray:
+    
+    n_layers = len(input_output_layers['fcn']) + len(hidden_layers['fcn'])
+    lvals = jnp.matmul(x, input_output_layers['fcn']['layer0']['kernel']) + input_output_layers['fcn']['layer0']['bias']
+    for key in hidden_layers['fcn']:
+        lvals = jnp.matmul(lvals, hidden_layers['fcn'][key]['kernel']) + hidden_layers['fcn'][key]['bias']
+    lvals = jnp.matmul(lvals, input_output_layers['fcn'][f'layer{n_layers-1}']['kernel']) + input_output_layers['fcn'][f'layer{n_layers -1}']['bias']
+    
+    return jnp.nansum(
+        stats.norm.logpdf(
+            x=y,
+            loc=lvals[..., 0],
+            scale=jnp.exp(lvals[..., 1]).clip(min=1e-6, max=1e6),
+                )
+            )    
+
+def log_unnormalized_posterior_partition(
+    input_output_layers: ParamTree,
+    hidden_layers: ParamTree,
+    x: jnp.ndarray,
+    y: jnp.ndarray,
+    **kwargs,
+):
+    return log_prior(input_output_layers) + log_likelihood_partition(input_output_layers, hidden_layers, x, y, **kwargs)

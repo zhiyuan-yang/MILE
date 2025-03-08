@@ -1,11 +1,3 @@
-data:
-  path:
-  - 'data/airfoil.data'
-  - 'data/bikesharing.data'
-  - 'data/concrete.data'
-  - 'data/energy.data'
-  - 'data/protein.data'
-  - 'data/yacht.data'
 rng:
 - 1
 - 2
