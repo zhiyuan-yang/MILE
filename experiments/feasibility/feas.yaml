@@ -1,5 +1,5 @@
 saving_dir: 'results/feas/'
-experiment_name: 'mclmc_naive_run'
+experiment_name: 'mclmc_naive_run_10_layers'
 data:
   path: 'data/airfoil.data'
   source: 'local'
@@ -15,7 +15,7 @@ data:
   test_split: 0.2
 model:
   model: FCN
-  hidden_structure: [16, 16, 16, 2]
+  hidden_structure: [16, 16, 16, 16, 16, 16, 16, 16, 16, 2]
   activation: 'relu'
   use_bias: true
 training:

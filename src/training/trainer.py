@@ -30,7 +30,7 @@ from src.inference.metrics import (
 )
 from src.inference.reporting import generate_html_report
 from src.training.probabilistic import ProbabilisticModel
-from src.training.sampling import inference_loop, partition_inference_loop
+from src.training.sampling import inference_loop
 from src.types import ParamTree
 from src.utils import measure_time, pretty_string_dict
 
@@ -65,8 +65,8 @@ class BDETrainer:
         self.n_devices = jax.device_count()
         self.metrics_warmstart = MetricsStore.empty()
         self._completed = False
-        self.partition_warmstart = True
-        self.partition_sampling = True
+        self.partition_warmstart = False
+        self.partition_sampling = False
 
         # Setup directory
         logger.info('> Setting up directories...')

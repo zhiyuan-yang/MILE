@@ -14,7 +14,6 @@ from src.config.sampler import Sampler, SamplerConfig
 from src.training.callbacks import (
     progress_bar_scan,
     save_position,
-    save_position_partition
 )
 from src.training.warmup import custom_mclmc_warmup, custom_window_adaptation
 from src.types import (
