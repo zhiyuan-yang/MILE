@@ -1,7 +1,7 @@
 saving_dir: 'results/repl_uci/'
-experiment_name: 'mclmc_debug'
+experiment_name: 'debug'
 data:
-  path: 'data/airfoil.data'
+  path: 'data/energy.data'
   source: 'local'
   data_type: 'tabular'
   task: 'regr'
@@ -25,14 +25,14 @@ training:
       name: 'adamw'
       parameters: {'learning_rate': 0.001, 'b1': 0.9, 'b2': 0.999, 'weight_decay': 0.001}
     warmstart_exp_dir: null
-    max_epochs: 2
+    max_epochs: 5
     batch_size: 32
     patience: 10
   sampler:
     name: 'mclmc'
     warmup_steps: 50
     n_chains: 12
-    n_samples: 1000
+    n_samples: 10000
     use_warmup_as_init: true
     diagonal_preconditioning: false
     num_effective_samples: 100

@@ -11,7 +11,6 @@ import optax
 from flax.training.train_state import TrainState
 import jax.scipy.stats as stats
 from jax.flatten_util import ravel_pytree
-import numpy as np
 
 import src.inference.metrics as sandbox_metrics
 import src.training.utils as train_utils
@@ -30,7 +29,7 @@ from src.inference.metrics import (
 )
 from src.inference.reporting import generate_html_report
 from src.training.probabilistic import ProbabilisticModel
-from src.training.sampling import inference_loop, partition_inference_loop
+from src.training.sampling import inference_loop
 from src.types import ParamTree
 from src.utils import measure_time, pretty_string_dict
 
@@ -596,21 +595,21 @@ class BDETrainer:
                 else:  # Mini-Batch Sampling
                     raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
             else:
-                params, fixed_params = partition_params(params)
+                params, hidden_layers = partition_params(params)
                 log_post = partial(
                         log_unnormalized_posterior_partition,
                         x=self.loader.train_x,
                         y=self.loader.train_y,
-                        fixed_params=fixed_params,
                 ) 
                 inference_loop(
-                        unnorm_log_posterior=log_post,
+                        unnorm_log_posterior=log_unnormalized_posterior_partition,
                         config=self.config_sampler,
                         rng_key=self.key,
                         init_params=params,
                         step_ids=step,
                         saving_path=self.exp_dir / self.config_sampler._dir_name,
                         saving_path_warmup=self._sampling_warmup_dir,
+                        hidden_layers=hidden_layers,
                     ) 
     
     #def complete_samples(self):
