@@ -28,3 +28,28 @@ class FCNConfig(ModelConfig):
     use_bias: bool = field(
         default=True, metadata={'description': 'Whether to include bias terms'}
     )
+
+@dataclass(frozen=True)
+class PartitionFCNConfig(ModelConfig):
+    """FCN Model Configuration."""
+
+    model: str = 'PartitionFCN'
+    hidden_structure: list[int] = field(
+        hash=False,
+        default_factory=lambda: [10, 10],
+        metadata={
+            'description': 'Width (+ number) of hidden layers',
+            'searchable': True,
+        },
+    )
+    activation: Activation = field(
+        default=Activation.RELU,
+        metadata={
+            'description': 'Activation func. for hidden layers',
+            'searchable': True,
+        },
+    )
+
+    use_bias: bool = field(
+        default=True, metadata={'description': 'Whether to include bias terms'}
+    )

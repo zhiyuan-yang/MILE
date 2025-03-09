@@ -44,7 +44,7 @@ def save_position(position: ParamTree, base: Path, idx: jnp.ndarray, n: int):
     return position
 
 
-def save_position_partial(position: ParamTree, base: Path, idx: jnp.ndarray, n: int):
+def save_position_partition(position: ParamTree, base: Path, idx: jnp.ndarray, n: int, fixed_params: ParamTree):
     """Save the position of the model. Change the intermediate layers with Gaussian prior.
 
     Parameters:
@@ -63,13 +63,11 @@ def save_position_partial(position: ParamTree, base: Path, idx: jnp.ndarray, n: 
     - This callback is used as io_callback during sampling to
         save the position after each sample.
     """
+    # Add fixed values of hidden layers to position
+    for layer, params in fixed_params['fcn'].items():
+        position['fcn'][layer] = params
     leafs, _ = jax.tree.flatten(position)
     param_names = get_flattened_keys(position)
-    # Change the intermediate layers with Gaussian samples
-    for i, (name, leaf) in enumerate(zip(param_names, leafs)):
-        #print(f'Current i is {i} and name is {name}, shape of leaf is {leaf.shape}\n')
-        if name == 'fcn.layer1.kernel':
-            leafs[i] = np.random.normal(loc=0, scale=1.0, size=leaf.shape)
     path = base / f'{idx.item()}/sample_{n}.npz'
     if not path.parent.exists():
         path.parent.mkdir(parents=True)

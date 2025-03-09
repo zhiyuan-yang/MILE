@@ -4,3 +4,5 @@ data:
   - 'data/concrete.data'
   - 'data/energy.data'
   - 'data/yacht.data'
+  - 'data/bikesharing.data'
+  - 'data/protein.data'

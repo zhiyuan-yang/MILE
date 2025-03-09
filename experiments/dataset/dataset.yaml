@@ -1,5 +1,5 @@
-saving_dir: 'results/repl_uci/'
-experiment_name: 'mclmc_airfoil_4_hidden_layers'
+saving_dir: 'results/dataset/'
+experiment_name: 'partition_warmstart'
 data:
   path: 'data/airfoil.data'
   source: 'local'
