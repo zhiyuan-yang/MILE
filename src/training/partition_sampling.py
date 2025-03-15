@@ -110,15 +110,17 @@ def partition_inference_loop(
             state: State,
             parameters: ParamTree,
             step_id: jnp.ndarray,
+            hidden_layers: ParamTree,
         ) -> Info:
             def one_step(state: State, xs: tuple[jnp.ndarray, jnp.ndarray]):
                 idx, rng_key = xs
                 state, info = sampler.step(rng_key, state)
                 # dump y to disk
+                merged_position = {'fcn': {**state.position['fcn'], **hidden_layers['fcn']}}
                 jax.experimental.io_callback(
                     partial(save_position, base=saving_path),
-                    result_shape_dtypes=state.position,
-                    position=state.position,
+                    result_shape_dtypes=merged_position,
+                    position=merged_position,
                     idx=step_id,
                     n=idx,
                 )
@@ -130,7 +132,8 @@ def partition_inference_loop(
                 )(one_step)
             )
 
-            sampler = config.kernel(unnorm_log_posterior, **parameters)
+            log_post = partial(unnorm_log_posterior, hidden_layers=hidden_layers)
+            sampler = config.kernel(log_post, **parameters)
             keys = jax.random.split(rng_key, config.n_samples)
             _, infos = jax.lax.scan(
                 f=one_step_, init=state, xs=(jnp.arange(config.n_samples), keys)
