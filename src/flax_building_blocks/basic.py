@@ -28,6 +28,17 @@ class FullyConnected(nn.Module):
     blockid: str | None = None
     dtype: jnp.dtype = jnp.float32
 
+    #def customized_init(
+    #    self,
+    #    loc,
+    #    std,
+    #):
+    #    def init(key,
+    #             shape,
+    #             dtype) :
+    #        return jax.random.normal(key, shape, dtype) * std + loc
+    #    return init
+    
     @nn.compact
     def __call__(self, x: jnp.ndarray):
         """Forward pass."""
@@ -130,59 +141,3 @@ class PretrainedTokenEmbedding(nn.Module):
             pos = jnp.take(self.position_embedding, pos, axis=0)
             embed += pos
         return embed
-
-class PartitionFullyConnected(nn.Module):
-    """
-    Partition Fully connected layers, where hidden layers are fixed values.
-
-    Args:
-        hidden_sizes (Sequence[int]): The hidden layer sizes.
-        activation (Optional[Callable]): The activation function. Defaults to nn.relu.
-        use_bias (bool): Whether to use bias. Defaults to True.
-        last_layer_activation (Optional[Callable]): The activation function for the
-          last layer. Defaults to None.
-        blockid (Optional[str]): The block id. Defaults to None.
-        dtype (Dtype): dtype used in computation. Defaults to jnp.float32.
-
-    """
-
-    hidden_sizes: tuple[int, ...]
-    activation: Callable
-    use_bias: bool = True
-    last_layer_activation: Callable | None = None
-    blockid: str | None = None
-    dtype: jnp.dtype = jnp.float32
-    
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray):
-        """Forward pass."""
-        if self.blockid is None:
-            blockid = ''
-        else:
-            blockid = f'{self.blockid}_'
-        for i, hidden_size in enumerate(self.hidden_sizes):
-            if i == 0 :
-                x = nn.Dense(
-                    features=hidden_size,
-                    dtype=self.dtype,
-                    use_bias=self.use_bias,
-                    name=f'{blockid}layer{i}',
-                )(x)
-                x = self.activation(x)
-            elif i == len(self.hidden_sizes) - 1:
-                x = nn.Dense(
-                    features=hidden_size,
-                    dtype=self.dtype,
-                    use_bias=self.use_bias,
-                    name=f'{blockid}layer{i}',
-                )(x)
-                if self.last_layer_activation is not None:
-                    x = self.last_layer_activation(x)
-            else:
-                kernel = jax.random.normal(jax.random.PRNGKey(i), (x.shape[-1], hidden_size))
-                bias = jax.random.normal(jax.random.PRNGKey(i + 1), (hidden_size,))
-                print(kernel, bias)
-                x = jnp.dot(x, kernel) + bias
-                x = self.activation(x)
-        return x

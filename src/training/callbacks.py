@@ -43,40 +43,6 @@ def save_position(position: ParamTree, base: Path, idx: jnp.ndarray, n: int):
     )
     return position
 
-
-def save_position_partition(position: ParamTree, base: Path, idx: jnp.ndarray, n: int, fixed_params: ParamTree):
-    """Save the position of the model. Change the intermediate layers with Gaussian prior.
-
-    Parameters:
-    -----------
-    position: ParamTree
-        Position of the model to save.
-    base: Path
-        Base path to save the samples.
-    idx: jnp.ndarray
-        Index of the current chain.
-    n: int
-        Index of the current sample.
-
-    Notes:
-    -----
-    - This callback is used as io_callback during sampling to
-        save the position after each sample.
-    """
-    # Add fixed values of hidden layers to position
-    for layer, params in fixed_params['fcn'].items():
-        position['fcn'][layer] = params
-    leafs, _ = jax.tree.flatten(position)
-    param_names = get_flattened_keys(position)
-    path = base / f'{idx.item()}/sample_{n}.npz'
-    if not path.parent.exists():
-        path.parent.mkdir(parents=True)
-    np.savez_compressed(
-        path, **{name: np.array(leaf) for name, leaf in zip(param_names, leafs)}
-    )
-    return position
-
-
 def progress_bar_scan(n_steps: int, name: str):
     """Progress bar designed for lax.scan.
 

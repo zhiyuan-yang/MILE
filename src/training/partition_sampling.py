@@ -14,9 +14,8 @@ from src.config.sampler import Sampler, SamplerConfig
 from src.training.callbacks import (
     progress_bar_scan,
     save_position,
-    save_position_partition
 )
-from src.training.warmup import custom_mclmc_warmup, custom_window_adaptation
+from src.training.partition_warmup import custom_mclmc_warmup, custom_window_adaptation
 from src.types import (
     Kernel,
     ParamTree,
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 Info = NUTSInfo | MCLMCInfo
 
 
-def inference_loop(
+def partition_inference_loop(
     unnorm_log_posterior: PosteriorFunction,
     config: SamplerConfig,
     rng_key: jnp.ndarray,
@@ -69,7 +68,7 @@ def inference_loop(
     # Warmup
     logger.info('> Starting Warmup sampling...')
     if config.name == Sampler.NUTS:
-        warmup_state, parameters = warmup_nuts(
+        warmup_state, parameters, hidden_layers = warmup_nuts(
             kernel=config.kernel,
             config=config,
             rng_key=warmup_key,
@@ -80,7 +79,7 @@ def inference_loop(
             saving_path=saving_path_warmup,
         )
     elif config.name == Sampler.MCLMC:
-        warmup_state, parameters = warmup_mclmc(
+        warmup_state, parameters, hidden_layers = warmup_mclmc(
             config=config,
             rng_key=warmup_key,
             init_params=init_params,
@@ -145,16 +144,18 @@ def inference_loop(
             state: State,
             parameters: ParamTree,
             step_id: jnp.ndarray,
+            hidden_layers: ParamTree,
         ) -> Info:
             def one_step(state: State, xs: tuple[jnp.ndarray, jnp.ndarray]):
                 idx, rng_key = xs
                 state, info = sampler.step(rng_key, state)
 
                 def save_if_thinned():
+                    merged_position = {'fcn': {**state.position['fcn'], **hidden_layers['fcn']}}
                     jax.experimental.io_callback(
                         partial(save_position, base=saving_path),
-                        result_shape_dtypes=state.position,
-                        position=state.position,
+                        result_shape_dtypes=merged_position,
+                        position=merged_position,
                         idx=step_id,
                         n=idx,
                     )
@@ -171,7 +172,8 @@ def inference_loop(
                 )(one_step)
             )
 
-            sampler = config.kernel(unnorm_log_posterior, **parameters)
+            log_post = partial(unnorm_log_posterior, hidden_layers=hidden_layers)
+            sampler = config.kernel(log_post, **parameters)
             keys = jax.random.split(rng_key, config.n_samples)
             _, infos = jax.lax.scan(
                 f=one_step_, init=state, xs=(jnp.arange(config.n_samples), keys)
@@ -181,7 +183,7 @@ def inference_loop(
     if n_devices > 1:
         runner = jax.pmap(
             _inference_loop,
-            in_axes=(0, 0, 0, 0),
+            in_axes=(0, 0, 0, 0, 0),
         )
         _rng = jax.random.split(sample_key, n_devices)
     else:
@@ -190,7 +192,7 @@ def inference_loop(
 
     # Run the sampling loop
     logger.info(f'> Starting {config.name} Sampling...')
-    runner_info = runner(_rng, warmup_state, parameters, step_ids)
+    runner_info = runner(_rng, warmup_state, parameters, step_ids, hidden_layers)
 
     # Explicitly wait for the computation to finish, doesnt matter if
     # we need runner_info or not.
@@ -229,6 +231,7 @@ def warmup_nuts(
     saving_path: Path | None = None,
 ) -> WarmupResult:
     """Perform warmup for NUTS."""
+    init_params, hidden_layers = partition_params(init_params)
     warmup_algo = custom_window_adaptation(
         algorithm=kernel,
         logdensity_fn=unnorm_log_posterior,
@@ -238,8 +241,8 @@ def warmup_nuts(
     if n_devices > 1:
         runner = jax.pmap(
             warmup_algo.run,
-            in_axes=(0, 0, 0, None, None),
-            static_broadcasted_argnums=(3, 4),
+            in_axes=(0, 0, 0, 0, None, None),
+            static_broadcasted_argnums=(4, 5),
         )
         _rng = jax.random.split(rng_key, n_devices)
     else:
@@ -250,10 +253,11 @@ def warmup_nuts(
         _rng,
         init_params,
         jnp.repeat(step_ids, config.warmup_steps).reshape(n_devices, -1).squeeze(),
+        hidden_layers,
         config.warmup_steps,
         n_devices,
     )
-    return warmup_state, parameters
+    return warmup_state, parameters, hidden_layers
 
 
 def warmup_mclmc(
@@ -264,6 +268,7 @@ def warmup_mclmc(
     n_devices: int,
 ) -> WarmupResult:
     """Perform warmup for MCLMC."""
+    init_params, hidden_layers = partition_params(init_params)
     warmup_algo = custom_mclmc_warmup(
         logdensity_fn=unnorm_log_posterior,
         diagonal_preconditioning=config.diagonal_preconditioning,
@@ -276,7 +281,7 @@ def warmup_mclmc(
     if n_devices > 1:
         runner = jax.pmap(
             warmup_algo.run,
-            in_axes=(0, 0, None),
+            in_axes=(0, 0, None, 0),
             static_broadcasted_argnums=(2),
         )
         _rng = jax.random.split(rng_key, n_devices)
@@ -288,6 +293,36 @@ def warmup_mclmc(
         _rng,
         init_params,
         config.warmup_steps,
+        hidden_layers,
     )
     parameters = {'step_size': parameters.step_size, 'L': parameters.L}
-    return warmup_state, parameters
+    return warmup_state, parameters, hidden_layers
+
+def partition_params(params):
+
+    input_output_layers = {}
+    hidden_layers = {}
+
+    for key, value in params['fcn'].items():
+        if key == 'layer0' or key == f'layer{len(params["fcn"]) - 1}':
+            input_output_layers[key] = value
+        else:
+            hidden_layers[key] = value
+
+    return {'fcn': input_output_layers}, {'fcn': hidden_layers}
+
+#def partition_params(params):
+#
+#   input_output_layers = {}
+#   hidden_layers = {}
+#
+#   for key, value in params['fcn'].items():
+#       if key == 'layer0' or key == f'layer{len(params["fcn"]) - 1}':
+#           input_output_layers[key] = value
+#       else:
+#           for sub_key, sub_value in value.items():
+#               if sub_key == 'bias':
+#                   input_output_layers[key][sub_key] = sub_value
+#               hidden_layers[key][sub_key] = sub_value
+#
+#   return {'fcn': input_output_layers}, {'fcn': hidden_layers}

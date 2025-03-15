@@ -30,6 +30,7 @@ from src.inference.metrics import (
 from src.inference.reporting import generate_html_report
 from src.training.probabilistic import ProbabilisticModel
 from src.training.sampling import inference_loop
+from src.training.partition_sampling import partition_inference_loop
 from src.types import ParamTree
 from src.utils import measure_time, pretty_string_dict
 
@@ -65,7 +66,7 @@ class BDETrainer:
         self.metrics_warmstart = MetricsStore.empty()
         self._completed = False
         self.partition_warmstart = False
-        self.partition_sampling = False
+        self.partition_sampling = True
 
         # Setup directory
         logger.info('> Setting up directories...')
@@ -170,11 +171,6 @@ class BDETrainer:
         self.start_sampling()
         self._completed = True
         logger.info('> BDE Training completed successfully.')
-        
-        # Add fixed params to samples if using partition sampling
-        #if self.partition_sampling:
-        #    logger.info('> Adding fixed params to samples...')
-        #    self.complete_samples()
 
         # Reporting Phase
         logger.info('> Generating HTML Report...')
@@ -595,42 +591,20 @@ class BDETrainer:
                 else:  # Mini-Batch Sampling
                     raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
             else:
-                params, hidden_layers = partition_params(params)
                 log_post = partial(
                         log_unnormalized_posterior_partition,
                         x=self.loader.train_x,
                         y=self.loader.train_y,
                 ) 
-                inference_loop(
-                        unnorm_log_posterior=log_unnormalized_posterior_partition,
+                partition_inference_loop(
+                        unnorm_log_posterior=log_post,
                         config=self.config_sampler,
                         rng_key=self.key,
                         init_params=params,
                         step_ids=step,
                         saving_path=self.exp_dir / self.config_sampler._dir_name,
                         saving_path_warmup=self._sampling_warmup_dir,
-                        hidden_layers=hidden_layers,
-                    ) 
-    
-    #def complete_samples(self):
-    #    """Complete the samples with fixed params."""
-    #    chains = [
-    #        self.exp_dir / self.config_warmstart._dir_name / f'params_{i}.npz'
-    #        for i in range(self.n_chains)
-    #    ]
-    #    saving_path = self.exp_dir / self.config_sampler._dir_name
-    #    for i in range(self.n_chains):
-    #        warmstart = dict(np.load(chains[i]))
-    #        sample_files = sorted(saving_path.glob(f'{i}/*.npz'))
-    #        samples = [np.load(file) for file in sample_files]
-    #        for sample in samples:
-    #            dic_sample = dict(sample)
-    #            for key in warmstart.keys():
-    #                if key not in dic_sample:    
-    #                    dic_sample[key] = warmstart[key]
-    #            np.savez(sample_files[i], **dic_sample)
-                
-            
+                    )         
             
 def single_step_class(
     state: TrainState,
@@ -922,22 +896,17 @@ def fn(parent_key, k, _, params):
     if parent_key == layer_keys[0] or parent_key == layer_keys[-1]:
         return 'input_output_layers'
     else:
-        return 'hidden_layers'
-    
-def partition_params(params):
-    input_output_layers = {}
-    hidden_layers = {}
+        return 'hidden_layers'    
 
-    input_output_layers = {}
-    hidden_layers = {}
-
-    for key, value in params['fcn'].items():
-        if key == 'layer0' or key == f'layer{len(params["fcn"]) - 1}':
-            input_output_layers[key] = value
-        else:
-            hidden_layers[key] = value
-
-    return {'fcn': input_output_layers}, {'fcn': hidden_layers}
+#def fn(parent_key, k, _, params):
+#    layer_keys = list(params['fcn'].keys())
+#    if parent_key == layer_keys[0] or parent_key == layer_keys[-1]:
+#        return 'input_output_layers'
+#    else:
+#        if k == 'kernel':
+#            return 'input_output_layers'
+#        else:
+#            return 'hidden_layers'    
 
 def log_prior(params: ParamTree) -> jax.Array:
         """Compute log prior for given parameters."""
