@@ -66,6 +66,10 @@ class WarmStartConfig(BaseConfig):
         default=None,
         metadata={'description': 'Early Stopping Patience in warmup training.'},
     )
+    partition_warmstart: bool = field(
+        default=False,
+        metadata={'description': 'Whether to partially warmstart the model or not.'},
+    )
 
     def __post_init__(self):
         """Perform additional checks on this particular class."""

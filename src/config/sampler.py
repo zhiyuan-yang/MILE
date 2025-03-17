@@ -181,6 +181,10 @@ class SamplerConfig(BaseConfig):
         default_factory=PriorConfig,
         metadata={'description': 'Prior configuration for the model.'},
     )
+    partition_sampling: bool = field(
+        default=False,
+        metadata={'description': 'Perform partial sampling.'},
+    )
 
     def __post_init__(self):
         """Post Initialization for the Sampler Configuration."""

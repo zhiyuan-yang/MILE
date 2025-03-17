@@ -65,8 +65,8 @@ class BDETrainer:
         self.n_devices = jax.device_count()
         self.metrics_warmstart = MetricsStore.empty()
         self._completed = False
-        self.partition_warmstart = False
-        self.partition_sampling = True
+        self.partition_warmstart = config.training.warmstart.partition_warmstart
+        self.partition_sampling = config.training.sampler.partition_sampling
 
         # Setup directory
         logger.info('> Setting up directories...')
@@ -911,6 +911,7 @@ def fn(parent_key, k, _, params):
 def log_prior(params: ParamTree) -> jax.Array:
         """Compute log prior for given parameters."""
         scores = stats.norm.logpdf(ravel_pytree(params)[0], loc=0, scale=1.0)
+        #jax.debug.print('log_prior: {}\n', scores)
         return jnp.sum(scores)
     
 def log_likelihood_partition(
@@ -923,10 +924,12 @@ def log_likelihood_partition(
     
     n_layers = len(input_output_layers['fcn']) + len(hidden_layers['fcn'])
     lvals = jnp.matmul(x, input_output_layers['fcn']['layer0']['kernel']) + input_output_layers['fcn']['layer0']['bias']
+    lvals = jax.nn.relu(lvals)
     for key in hidden_layers['fcn']:
         lvals = jnp.matmul(lvals, hidden_layers['fcn'][key]['kernel']) + hidden_layers['fcn'][key]['bias']
+        lvals = jax.nn.relu(lvals)
     lvals = jnp.matmul(lvals, input_output_layers['fcn'][f'layer{n_layers-1}']['kernel']) + input_output_layers['fcn'][f'layer{n_layers -1}']['bias']
-    
+    #jax.debug.print("y:{}\n lvals:{}\n", y, lvals)
     return jnp.nansum(
         stats.norm.logpdf(
             x=y,
