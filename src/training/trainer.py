@@ -592,7 +592,7 @@ class BDETrainer:
                     raise NotImplementedError('Mini-Batch Sampling not yet implemented.')
             else:
                 log_post = partial(
-                        log_unnormalized_posterior_partition,
+                        self.log_unnormalized_posterior_partition,
                         x=self.loader.train_x,
                         y=self.loader.train_y,
                 ) 
@@ -604,7 +604,60 @@ class BDETrainer:
                         step_ids=step,
                         saving_path=self.exp_dir / self.config_sampler._dir_name,
                         saving_path_warmup=self._sampling_warmup_dir,
-                    )         
+                    )
+                
+    def log_prior(self, params: ParamTree) -> jax.Array:
+        """Compute log prior for given parameters."""
+        return self.config.training.prior.log_prior(params)
+    
+    def log_likelihood_partition(
+        self,
+        input_output_layers: ParamTree,
+        hidden_layers: ParamTree,
+        x: jnp.ndarray,
+        y: jnp.ndarray,
+        **kwargs,
+    ) -> jnp.ndarray:
+        
+        activation = self.config.model.activation.flax_activation
+        if self.config.model.model == 'FCN':
+            n_layers = len(input_output_layers['fcn']) + len(hidden_layers['fcn'])
+            lvals = jnp.matmul(x, input_output_layers['fcn']['layer0']['kernel']) + input_output_layers['fcn']['layer0']['bias']
+            lvals = activation(lvals)
+            for key in hidden_layers['fcn']:
+                lvals = jnp.matmul(lvals, hidden_layers['fcn'][key]['kernel']) + hidden_layers['fcn'][key]['bias']
+                lvals = activation(lvals)
+            lvals = jnp.matmul(lvals, input_output_layers['fcn'][f'layer{n_layers-1}']['kernel']) + input_output_layers['fcn'][f'layer{n_layers -1}']['bias']
+            if self.task == Task.REGRESSION:
+                return jnp.nansum(
+                    stats.norm.logpdf(
+                        x=y,
+                        loc=lvals[..., 0],
+                        scale=jnp.exp(lvals[..., 1]).clip(min=1e-6, max=1e6),
+                            )
+                        )
+            elif self.task == Task.CLASSIFICATION:
+                # directly taken from https://num.pyro.ai/en/stable/_modules/
+                # numpyro/distributions/discrete.html#CategoricalLogits
+                batch_shape = jax.lax.broadcast_shapes(jnp.shape(y), jnp.shape(lvals)[:-1])
+                y = jnp.expand_dims(y, -1)
+                y = jnp.broadcast_to(y, batch_shape + (1,))
+                log_pmf = lvals - jax.scipy.special.logsumexp(lvals, axis=-1, keepdims=True)
+                log_pmf = jnp.broadcast_to(log_pmf, batch_shape + jnp.shape(log_pmf)[-1:])
+                return jnp.nansum(jnp.take_along_axis(log_pmf, indices=y, axis=-1)[..., 0])
+        else:
+            AssertionError('Model not implemented!')
+                
+    def log_unnormalized_posterior_partition(
+        self,
+        input_output_layers: ParamTree,
+        hidden_layers: ParamTree,
+        x: jnp.ndarray,
+        y: jnp.ndarray,
+        **kwargs,
+    ):
+        return self.log_prior(input_output_layers) + self.log_likelihood_partition(input_output_layers, hidden_layers, x, y, **kwargs)         
+            
             
 def single_step_class(
     state: TrainState,
